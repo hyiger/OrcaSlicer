@@ -1,0 +1,466 @@
+name: Build Fork (All Platforms)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build-deps-only:
+        description: 'Only build dependencies (skip slicer build)'
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+    paths:
+      - 'deps/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'version.inc'
+
+concurrency:
+  group: build-fork-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Dependencies: Build and cache per platform
+  # ─────────────────────────────────────────────────────────────────────────
+  build_deps:
+    name: Deps (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+            cache-path: deps/build/destdir
+            cache-key-prefix: fork-linux
+          - name: windows
+            os: windows-latest
+            cache-path: deps/build/OrcaSlicer_dep
+            cache-key-prefix: fork-windows
+          - name: macos-arm64
+            os: macos-14
+            cache-path: deps/build/arm64
+            cache-key-prefix: fork-macos-arm64
+          - name: macos-x86_64
+            os: macos-13
+            cache-path: deps/build/x86_64
+            cache-key-prefix: fork-macos-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore deps cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.cache-path }}
+          key: ${{ matrix.cache-key-prefix }}-deps-${{ hashFiles('deps/**') }}
+
+      # Linux deps
+      - name: Install system packages (Linux)
+        if: matrix.name == 'linux' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p deps/build/destdir
+          sudo ./build_linux.sh -ur
+          sudo chown $USER -R ./
+
+      - name: Build deps (Linux)
+        if: matrix.name == 'linux' && steps.cache.outputs.cache-hit != 'true'
+        run: ./build_linux.sh -drlL
+
+      # Windows deps
+      - name: Install Perl (Windows)
+        if: matrix.name == 'windows' && steps.cache.outputs.cache-hit != 'true'
+        run: choco install strawberryperl
+
+      - name: Build deps (Windows)
+        if: matrix.name == 'windows' && steps.cache.outputs.cache-hit != 'true'
+        run: .\build_release_vs.bat deps
+
+      # macOS deps
+      - name: Install tools (macOS)
+        if: startsWith(matrix.name, 'macos') && steps.cache.outputs.cache-hit != 'true'
+        run: brew install automake texinfo libtool
+
+      - name: Move system OpenSSL (macOS)
+        if: startsWith(matrix.name, 'macos') && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          if [ -L /usr/local/include/openssl ]; then
+            sudo mv /usr/local/include/openssl /usr/local/include/openssl.bak
+          fi
+
+      - name: Build deps (macOS)
+        if: startsWith(matrix.name, 'macos') && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          ARCH=${{ matrix.name == 'macos-arm64' && 'arm64' || 'x86_64' }}
+          ./build_release_macos.sh -d -x -1 -a $ARCH
+
+      - name: Restore system OpenSSL (macOS)
+        if: startsWith(matrix.name, 'macos') && always()
+        run: |
+          if [ -d /usr/local/include/openssl.bak ]; then
+            sudo mv /usr/local/include/openssl.bak /usr/local/include/openssl
+          fi
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # macOS ARM64
+  # ─────────────────────────────────────────────────────────────────────────
+  build_macos_arm64:
+    name: macOS arm64
+    needs: build_deps
+    if: ${{ !inputs.build-deps-only }}
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore deps cache
+        uses: actions/cache/restore@v4
+        with:
+          path: deps/build/arm64
+          key: fork-macos-arm64-deps-${{ hashFiles('deps/**') }}
+          fail-on-cache-miss: true
+
+      - name: Move system OpenSSL
+        run: |
+          if [ -L /usr/local/include/openssl ]; then
+            sudo mv /usr/local/include/openssl /usr/local/include/openssl.bak
+          fi
+
+      - name: Build slicer
+        run: ./build_release_macos.sh -s -n -x -1 -a arm64
+
+      - name: Restore system OpenSSL
+        if: always()
+        run: |
+          if [ -d /usr/local/include/openssl.bak ]; then
+            sudo mv /usr/local/include/openssl.bak /usr/local/include/openssl
+          fi
+
+      - name: Pack bundle
+        run: tar -czvf OrcaSlicer_Mac_arm64.tar.gz -C build/arm64 OrcaSlicer
+
+      - name: Upload arm64 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrcaSlicer_Mac_arm64
+          path: OrcaSlicer_Mac_arm64.tar.gz
+          retention-days: 3
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # macOS x86_64
+  # ─────────────────────────────────────────────────────────────────────────
+  build_macos_x86_64:
+    name: macOS x86_64
+    needs: build_deps
+    if: ${{ !inputs.build-deps-only }}
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore deps cache
+        uses: actions/cache/restore@v4
+        with:
+          path: deps/build/x86_64
+          key: fork-macos-x86_64-deps-${{ hashFiles('deps/**') }}
+          fail-on-cache-miss: true
+
+      - name: Move system OpenSSL
+        run: |
+          if [ -L /usr/local/include/openssl ]; then
+            sudo mv /usr/local/include/openssl /usr/local/include/openssl.bak
+          fi
+
+      - name: Build slicer
+        run: ./build_release_macos.sh -s -n -x -1 -a x86_64
+
+      - name: Restore system OpenSSL
+        if: always()
+        run: |
+          if [ -d /usr/local/include/openssl.bak ]; then
+            sudo mv /usr/local/include/openssl.bak /usr/local/include/openssl
+          fi
+
+      - name: Pack bundle
+        run: tar -czvf OrcaSlicer_Mac_x86_64.tar.gz -C build/x86_64 OrcaSlicer
+
+      - name: Upload x86_64 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrcaSlicer_Mac_x86_64
+          path: OrcaSlicer_Mac_x86_64.tar.gz
+          retention-days: 3
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # macOS Universal DMG
+  # ─────────────────────────────────────────────────────────────────────────
+  build_macos_universal:
+    name: macOS Universal DMG
+    needs: [build_macos_arm64, build_macos_x86_64]
+    runs-on: macos-14
+    env:
+      ver: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        run: |
+          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+          echo "ver=V${ver_pure}" >> $GITHUB_ENV
+
+      - name: Download arm64 bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: OrcaSlicer_Mac_arm64
+
+      - name: Download x86_64 bundle
+        uses: actions/download-artifact@v4
+
+      - name: Extract bundles
+        run: |
+          mkdir -p build/arm64 build/x86_64
+          tar -xzf OrcaSlicer_Mac_arm64.tar.gz -C build/arm64
+          tar -xzf OrcaSlicer_Mac_x86_64.tar.gz -C build/x86_64
+
+      - name: Create universal binary
+        run: ./build_release_macos.sh -u -x -1 -a universal
+
+      - name: Create DMG
+        run: |
+          hdiutil create -volname "OrcaSlicer" \
+            -srcfolder build/universal/OrcaSlicer \
+            -ov -format UDZO \
+            OrcaSlicer_Mac_universal_${{ env.ver }}.dmg
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrcaSlicer_Mac_universal_${{ env.ver }}
+          path: OrcaSlicer_Mac_universal_${{ env.ver }}.dmg
+
+      - name: Delete intermediate bundles
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            OrcaSlicer_Mac_arm64
+            OrcaSlicer_Mac_x86_64
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Windows
+  # ─────────────────────────────────────────────────────────────────────────
+  build_windows:
+    name: Windows
+    needs: build_deps
+    if: ${{ !inputs.build-deps-only }}
+    runs-on: windows-latest
+    env:
+      ver: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        run: |
+          $versionContent = Get-Content version.inc -Raw
+          if ($versionContent -match 'set\(SoftFever_VERSION "(.*?)"\)') {
+              $ver = $matches[1]
+          }
+          echo "ver=V$ver" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+
+      - name: Restore deps cache
+        uses: actions/cache/restore@v4
+        with:
+          path: deps/build/OrcaSlicer_dep
+          key: fork-windows-deps-${{ hashFiles('deps/**') }}
+          fail-on-cache-miss: true
+
+      - name: Setup MSVC
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install NSIS
+        run: choco install nsis
+
+      - name: Build slicer
+        env:
+          WindowsSdkDir: 'C:\Program Files (x86)\Windows Kits\10\'
+          WindowsSDKVersion: '10.0.26100.0\'
+        run: .\build_release_vs.bat slicer
+
+      - name: Create installer
+        working-directory: build
+        run: cpack -G NSIS
+
+      - name: Create portable zip
+        working-directory: build
+        shell: cmd
+        run: '"C:/Program Files/7-Zip/7z.exe" a -tzip OrcaSlicer_Windows_${{ env.ver }}_portable.zip OrcaSlicer'
+
+      - name: Upload portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrcaSlicer_Windows_${{ env.ver }}_portable
+          path: build/OrcaSlicer_Windows_${{ env.ver }}_portable.zip
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrcaSlicer_Windows_${{ env.ver }}_installer
+          path: build/OrcaSlicer*.exe
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Linux (AppImage + .deb)
+  # ─────────────────────────────────────────────────────────────────────────
+  build_linux:
+    name: Linux
+    needs: build_deps
+    if: ${{ !inputs.build-deps-only }}
+    runs-on: ubuntu-24.04
+    env:
+      ver: ''
+      ver_pure: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        run: |
+          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+          echo "ver=V${ver_pure}" >> $GITHUB_ENV
+          echo "ver_pure=${ver_pure}" >> $GITHUB_ENV
+
+      - name: Restore deps cache
+        uses: actions/cache/restore@v4
+        with:
+          path: deps/build/destdir
+          key: fork-linux-deps-${{ hashFiles('deps/**') }}
+          fail-on-cache-miss: true
+
+      - name: Install system packages
+        uses: ./.github/actions/apt-install-deps
+
+      - name: Build slicer and tests
+        run: |
+          ./build_linux.sh -istrlL
+          mv -n ./build/OrcaSlicer_Linux_V${{ env.ver_pure }}.AppImage ./build/OrcaSlicer_Linux_${{ env.ver }}.AppImage
+          chmod +x ./build/OrcaSlicer_Linux_${{ env.ver }}.AppImage
+          tar -cvpf build_tests.tar build/tests
+
+      - name: Create .deb package
+        run: |
+          DEB_DIR=orcaslicer_${{ env.ver_pure }}_amd64
+          mkdir -p ${DEB_DIR}/DEBIAN
+          mkdir -p ${DEB_DIR}/usr/bin
+          mkdir -p ${DEB_DIR}/usr/lib/orcaslicer
+          mkdir -p ${DEB_DIR}/usr/share/applications
+          mkdir -p ${DEB_DIR}/usr/share/icons/hicolor/256x256/apps
+
+          # Control file
+          cat > ${DEB_DIR}/DEBIAN/control << 'CTRL'
+          Package: orcaslicer
+          Version: ${{ env.ver_pure }}
+          Section: graphics
+          Priority: optional
+          Architecture: amd64
+          Depends: libgtk-3-0, libgl1, libglu1-mesa, libcurl4, libssl3, libwebkit2gtk-4.1-0
+          Maintainer: OrcaSlicer Fork <noreply@github.com>
+          Description: OrcaSlicer 3D printing slicer
+           An open-source FDM/SLA 3D slicer forked from Bambu Studio.
+           Supports multi-material printing, tree supports, and more.
+          CTRL
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' ${DEB_DIR}/DEBIAN/control
+
+          # Copy binary and resources
+          cp build/src/Release/orca-slicer ${DEB_DIR}/usr/lib/orcaslicer/ 2>/dev/null || \
+            cp build/src/orca-slicer ${DEB_DIR}/usr/lib/orcaslicer/ 2>/dev/null || \
+            cp build/OrcaSlicer/bin/orca-slicer ${DEB_DIR}/usr/lib/orcaslicer/
+          cp -r resources ${DEB_DIR}/usr/lib/orcaslicer/
+
+          # Symlink
+          ln -s ../lib/orcaslicer/orca-slicer ${DEB_DIR}/usr/bin/orca-slicer
+
+          # Desktop file
+          cat > ${DEB_DIR}/usr/share/applications/OrcaSlicer.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Name=OrcaSlicer
+          Exec=orca-slicer %F
+          Icon=OrcaSlicer
+          Type=Application
+          Categories=Graphics;3DGraphics;Engineering;
+          MimeType=model/stl;application/vnd.ms-3mfdocument;
+          DESKTOP
+
+          # Icon
+          cp resources/images/OrcaSlicer.png ${DEB_DIR}/usr/share/icons/hicolor/256x256/apps/ 2>/dev/null || true
+
+          dpkg-deb --build ${DEB_DIR}
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrcaSlicer_Linux_${{ env.ver }}_AppImage
+          path: build/OrcaSlicer_Linux_${{ env.ver }}.AppImage
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrcaSlicer_Linux_${{ env.ver }}_deb
+          path: orcaslicer_${{ env.ver_pure }}_amd64.deb
+
+      - name: Upload test archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-tests
+          path: build_tests.tar
+          retention-days: 3
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Tests
+  # ─────────────────────────────────────────────────────────────────────────
+  run_tests:
+    name: Unit Tests
+    needs: build_linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github
+            scripts
+            tests
+
+      - name: Install system packages
+        uses: ./.github/actions/apt-install-deps
+
+      - name: Download test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: build-tests
+
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~4.3.0"
+
+      - name: Run all unit tests
+        timeout-minutes: 20
+        run: |
+          tar -xvf build_tests.tar
+          cd build/tests
+          ctest --output-on-failure --output-junit ${{ github.workspace }}/ctest_results.xml -j$(nproc)
+
+      - name: Publish test results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: ctest_results.xml
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: build/tests/**/*.log
+
+      - name: Delete test archive
+        if: success()
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: build-tests
