@@ -69,6 +69,10 @@ orcaslicer_add_cmake_project(CURL
     -DBUILD_CURL_EXE:BOOL=OFF
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     -DCURL_STATICLIB=${_curl_static}
+    -DOPENSSL_ROOT_DIR:PATH=${DESTDIR}
+    -DOPENSSL_INCLUDE_DIR:PATH=${DESTDIR}/include
+    -DOPENSSL_SSL_LIBRARY:FILEPATH=${DESTDIR}/lib/libssl.a
+    -DOPENSSL_CRYPTO_LIBRARY:FILEPATH=${DESTDIR}/lib/libcrypto.a
     ${_curl_platform_flags}
 )
 

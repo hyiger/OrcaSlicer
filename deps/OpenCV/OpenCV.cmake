@@ -26,6 +26,9 @@ orcaslicer_add_cmake_project(OpenCV
        -DBUILD_opencv_java=OFF
        -DBUILD_OPENEXR=OFF
        -DBUILD_PNG=ON
+       -DPNG_ARM_NEON=off
+       -DENABLE_NEON=OFF
+       "-DCMAKE_C_FLAGS=-DPNG_ARM_NEON_OPT=0"
        -DBUILD_TBB=OFF
        -DBUILD_WEBP=OFF
        -DBUILD_ZLIB=OFF

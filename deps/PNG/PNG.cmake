@@ -5,7 +5,7 @@ else ()
     set(_disable_neon_extension "")
 endif ()
 
-if(APPLE AND IS_CROSS_COMPILE)
+if(APPLE AND CMAKE_OSX_ARCHITECTURES MATCHES "arm")
 # TODO: check if it doesn't create problem when compiling from arm to x86_64
     orcaslicer_add_cmake_project(PNG 
         GIT_REPOSITORY https://github.com/glennrp/libpng.git 
