@@ -196,8 +196,9 @@ bool FilamentDbClient::fetch_filaments(const std::string& base_url)
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_filaments = std::move(entries);
-        m_fetched   = true;
+        m_filaments       = std::move(entries);
+        m_fetched         = true;
+        m_last_fetch_time = std::chrono::steady_clock::now();
     }
 
     BOOST_LOG_TRIVIAL(info) << "FilamentDbClient: loaded " << m_filaments.size()
@@ -294,6 +295,111 @@ std::string FilamentDbClient::get_url() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_url;
+}
+
+bool FilamentDbClient::is_stale(int seconds) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_fetched)
+        return true;
+    auto elapsed = std::chrono::steady_clock::now() - m_last_fetch_time;
+    return std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() >= seconds;
+}
+
+bool FilamentDbClient::is_db_filament(const std::string& preset_name) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto& e : m_filaments) {
+        if (e.name == preset_name)
+            return true;
+    }
+    return false;
+}
+
+std::string FilamentDbClient::bed_type_to_db_name(BedType bt)
+{
+    switch (bt) {
+    case btPC:        return "Cool Plate";
+    case btPCT:       return "Textured Cool Plate";
+    case btEP:        return "Engineering Plate";
+    case btPEI:       return "Hot Plate";
+    case btPTE:       return "Textured PEI Plate";
+    case btSuperTack: return "SuperTack Plate";
+    default:          return "";
+    }
+}
+
+bool FilamentDbClient::sync_to_db(const std::string& base_url,
+                                   const std::string& filament_name,
+                                   const DynamicPrintConfig& config)
+{
+    // Build JSON body with OrcaSlicer config keys
+    json j;
+    // Map structured fields back to DB format
+    auto set_temp = [&](const char* orca_key) -> int {
+        auto* opt = config.option<ConfigOptionInts>(orca_key);
+        return (opt && !opt->values.empty()) ? opt->values[0] : 0;
+    };
+    auto set_float = [&](const char* orca_key) -> double {
+        auto* opt = config.option<ConfigOptionFloats>(orca_key);
+        return (opt && !opt->values.empty()) ? opt->values[0] : 0.0;
+    };
+    auto set_string = [&](const char* orca_key) -> std::string {
+        auto* opt = config.option<ConfigOptionStrings>(orca_key);
+        return (opt && !opt->values.empty()) ? opt->values[0] : "";
+    };
+
+    j["name"] = filament_name;
+    j["type"] = set_string("filament_type");
+    j["vendor"] = set_string("filament_vendor");
+    j["color"] = set_string("filament_colour");
+    j["density"] = set_float("filament_density");
+    j["cost"] = set_float("filament_cost");
+    j["diameter"] = set_float("filament_diameter");
+    j["maxVolumetricSpeed"] = set_float("filament_max_volumetric_speed");
+
+    // Temperatures
+    json temps;
+    temps["nozzle"] = set_temp("nozzle_temperature");
+    temps["nozzleFirstLayer"] = set_temp("nozzle_temperature_initial_layer");
+    temps["bed"] = set_temp("hot_plate_temp");
+    temps["bedFirstLayer"] = set_temp("hot_plate_temp_initial_layer");
+    int range_low = set_temp("nozzle_temperature_range_low");
+    int range_high = set_temp("nozzle_temperature_range_high");
+    if (range_low > 0) temps["nozzleRangeMin"] = range_low;
+    if (range_high > 0) temps["nozzleRangeMax"] = range_high;
+    j["temperatures"] = temps;
+
+    std::string url = strip_trailing_slash(base_url) + "/api/filaments/"
+                      + Http::url_encode(filament_name);
+    std::string json_body = j.dump();
+    bool success = false;
+
+    auto http = Http::put(url);
+    http.header("Content-Type", "application/json")
+        .set_post_body(json_body)
+        .timeout_max(15)
+        .on_complete([&](std::string /*body*/, unsigned http_status) {
+            success = (http_status >= 200 && http_status < 300);
+        })
+        .on_error([&](std::string /*body*/, std::string error, unsigned /*status*/) {
+            BOOST_LOG_TRIVIAL(warning) << "FilamentDbClient: sync error: " << error;
+        })
+        .perform_sync();
+
+    if (success)
+        BOOST_LOG_TRIVIAL(info) << "FilamentDbClient: synced '" << filament_name << "' to DB";
+    return success;
+}
+
+// ---------------------------------------------------------------------------
+// Global singleton
+// ---------------------------------------------------------------------------
+
+FilamentDbClient& get_filament_db_client()
+{
+    static FilamentDbClient s_client;
+    return s_client;
 }
 
 } // namespace Slic3r

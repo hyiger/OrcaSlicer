@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <chrono>
 
 #include "libslic3r/PrintConfig.hpp"
 
@@ -57,11 +58,26 @@ public:
     /// True if a non-empty URL is configured.
     bool is_enabled() const;
 
+    /// True if the cache is older than `seconds` (default 5 min).
+    bool is_stale(int seconds = 300) const;
+
     /// Set the base URL. Clears cache if URL changed.
     void set_url(const std::string& url);
 
     /// Get the configured base URL.
     std::string get_url() const;
+
+    /// Sync a filament preset back to the DB.
+    /// Extracts structured fields from the DynamicPrintConfig and PUTs them.
+    bool sync_to_db(const std::string& base_url,
+                    const std::string& filament_name,
+                    const DynamicPrintConfig& config);
+
+    /// Map OrcaSlicer BedType enum to the DB bed type name string.
+    static std::string bed_type_to_db_name(BedType bt);
+
+    /// Check if a filament preset name exists in the DB cache.
+    bool is_db_filament(const std::string& preset_name) const;
 
     // --- Public for testing ---
 
@@ -78,6 +94,10 @@ private:
     std::vector<FilamentDbEntry> m_filaments;
     bool                     m_fetched{false};
     std::string              m_url;
+    std::chrono::steady_clock::time_point m_last_fetch_time;
 };
+
+/// Global singleton accessor for the Filament DB client.
+FilamentDbClient& get_filament_db_client();
 
 } // namespace Slic3r

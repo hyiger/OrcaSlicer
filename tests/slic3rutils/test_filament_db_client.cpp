@@ -198,4 +198,51 @@ TEST_CASE("FilamentDbClient state management", "[FilamentDb]") {
         client.clear_cache();
         REQUIRE(client.get_filaments().empty());
     }
+
+    SECTION("is_stale returns true when not yet fetched") {
+        REQUIRE(client.is_stale());
+    }
+
+    SECTION("is_stale returns true with large timeout when never fetched") {
+        client.set_url("http://localhost:3456");
+        REQUIRE(client.is_stale(0));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// bed_type_to_db_name tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("FilamentDbClient bed_type_to_db_name", "[FilamentDb]") {
+    CHECK(FilamentDbClient::bed_type_to_db_name(btPC) == "Cool Plate");
+    CHECK(FilamentDbClient::bed_type_to_db_name(btPCT) == "Textured Cool Plate");
+    CHECK(FilamentDbClient::bed_type_to_db_name(btEP) == "Engineering Plate");
+    CHECK(FilamentDbClient::bed_type_to_db_name(btPEI) == "Hot Plate");
+    CHECK(FilamentDbClient::bed_type_to_db_name(btPTE) == "Textured PEI Plate");
+    CHECK(FilamentDbClient::bed_type_to_db_name(btSuperTack) == "SuperTack Plate");
+    CHECK(FilamentDbClient::bed_type_to_db_name(btDefault) == "");
+}
+
+// ---------------------------------------------------------------------------
+// is_db_filament tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("FilamentDbClient is_db_filament", "[FilamentDb]") {
+    // Parse some entries first
+    std::string json = R"([
+        {"name": "My PLA", "filament_type": ["PLA"]},
+        {"name": "My PETG", "filament_type": ["PETG"]}
+    ])";
+
+    FilamentDbClient client;
+    client.set_url("http://test");
+
+    // Manually verify parse works
+    std::vector<FilamentDbEntry> entries;
+    bool ok = FilamentDbClient::parse_filaments_response(json, entries);
+    REQUIRE(ok);
+
+    // is_db_filament checks the cache, not parsed entries — so with empty cache it's false
+    CHECK_FALSE(client.is_db_filament("My PLA"));
+    CHECK_FALSE(client.is_db_filament("Unknown"));
 }

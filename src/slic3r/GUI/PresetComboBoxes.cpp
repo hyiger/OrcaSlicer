@@ -574,13 +574,6 @@ int PresetComboBox::selected_ams_filament() const
     return -1;
 }
 
-// Singleton Filament DB client shared across all combo boxes
-static FilamentDbClient& get_filament_db_client()
-{
-    static FilamentDbClient s_client;
-    return s_client;
-}
-
 bool PresetComboBox::add_filament_db_entries(const std::string& selected)
 {
     bool selected_in_db = false;
@@ -597,15 +590,18 @@ bool PresetComboBox::add_filament_db_entries(const std::string& selected)
     if (fdb.get_url() != db_url)
         fdb.set_url(db_url);
 
-    // Fetch filaments if not yet cached (synchronous — fast for local service)
+    // Fetch filaments if not yet cached, or refresh if stale (>5 min)
     auto entries = fdb.get_filaments();
-    if (entries.empty()) {
+    if (entries.empty() || fdb.is_stale()) {
         BOOST_LOG_TRIVIAL(info) << "FilamentDbClient: fetching filaments from " << db_url;
         if (!fdb.fetch_filaments(db_url)) {
             BOOST_LOG_TRIVIAL(warning) << "FilamentDbClient: fetch failed from " << db_url;
-            return false;
+            if (entries.empty())
+                return false;
+            // Use stale cache if refresh failed
+        } else {
+            entries = fdb.get_filaments();
         }
-        entries = fdb.get_filaments();
         if (entries.empty())
             return false;
     }

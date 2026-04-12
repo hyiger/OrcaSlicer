@@ -109,6 +109,7 @@
 #include "ConfigWizard.hpp"
 #include "SyncAmsInfoDialog.hpp"
 #include "../Utils/ASCIIFolding.hpp"
+#include "../Utils/FilamentDbClient.hpp"
 #include "../Utils/FixModelByWin10.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "../Utils/PresetUpdater.hpp"
@@ -16180,6 +16181,49 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
     if (opt_old && opt_new) {
         old_nozzle_size = opt_old->values.size();
         new_nozzle_size = opt_new->values.size();
+    }
+
+    // Auto-calibration: when nozzle/bed/printer changes, fetch calibration
+    // overrides from Filament DB for any DB-sourced filament presets
+    {
+        bool hardware_changed = false;
+        for (const auto& key : diff_keys) {
+            if (key == "nozzle_diameter" || key == "curr_bed_type" || key == "printer_model") {
+                hardware_changed = true;
+                break;
+            }
+        }
+        if (hardware_changed) {
+            auto& fdb = get_filament_db_client();
+            if (fdb.is_enabled()) {
+                auto& filaments = wxGetApp().preset_bundle->filaments;
+                const auto& edited = filaments.get_edited_preset();
+                std::string preset_name = edited.name;
+
+                if (fdb.is_db_filament(preset_name)) {
+                    auto* nozzle_opt = config.option<ConfigOptionFloats>("nozzle_diameter");
+                    double nozzle = (nozzle_opt && !nozzle_opt->values.empty()) ? nozzle_opt->values[0] : 0.4;
+                    // curr_bed_type may not exist in the config (it's in project config)
+                    auto* bed_opt = config.option<ConfigOptionInt>("curr_bed_type");
+                    BedType bed = bed_opt ? static_cast<BedType>(bed_opt->value)
+                                         : wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
+                    std::string bed_name = FilamentDbClient::bed_type_to_db_name(bed);
+
+                    FilamentDbCalibration cal;
+                    if (fdb.fetch_calibration(fdb.get_url(), preset_name, nozzle, bed_name, cal)) {
+                        Preset& edited_preset = filaments.get_edited_preset();
+                        for (const std::string& k : cal.overrides.keys()) {
+                            const ConfigOption* opt = cal.overrides.option(k);
+                            if (opt && edited_preset.config.def()->has(k))
+                                edited_preset.config.set_key_value(k, opt->clone());
+                        }
+                        BOOST_LOG_TRIVIAL(info) << "FilamentDbClient: auto-applied calibration for '"
+                                                << preset_name << "' (nozzle=" << nozzle
+                                                << ", bed=" << bed_name << ")";
+                    }
+                }
+            }
+        }
     }
 
     for (auto opt_key : diff_keys) {
