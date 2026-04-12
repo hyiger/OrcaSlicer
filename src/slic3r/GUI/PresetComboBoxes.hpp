@@ -56,6 +56,7 @@ public:
     enum FilamentAMSType :unsigned int {
         ORIGINAL ,
         FROM_AMS,
+        FROM_FILAMENT_DB,
     };
 
     void set_label_marker(int item, LabelItemType label_item_type = LABEL_ITEM_MARKER);
@@ -82,6 +83,10 @@ public:
     // BBS: ams
     bool add_ams_filaments(std::string selected, bool alias_name = false);
     int  selected_ams_filament() const;
+
+    // Filament DB
+    bool add_filament_db_entries(const std::string& selected);
+    int  selected_filament_db_entry() const;
 
     void set_filament_idx(const int extr_idx) { m_filament_idx = extr_idx; }
     int  get_filament_idx() const { return m_filament_idx; }
@@ -129,6 +134,10 @@ protected:
     int  m_filament_idx       = -1;
     int m_first_ams_filament = 0;
     int m_last_ams_filament = 0;
+
+    // Filament DB
+    int m_first_filament_db = 0;
+    int m_last_filament_db  = 0;
 
     // parameters for an icon's drawing
     int icon_height;

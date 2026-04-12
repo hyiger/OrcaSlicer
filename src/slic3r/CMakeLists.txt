@@ -586,6 +586,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/FontConfigHelp.hpp
     Utils/HexFile.cpp
     Utils/HexFile.hpp
+    Utils/FilamentDbClient.cpp
+    Utils/FilamentDbClient.hpp
     Utils/Http.cpp
     Utils/Http.hpp
     Utils/InstanceID.cpp

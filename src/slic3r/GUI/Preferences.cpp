@@ -1560,6 +1560,44 @@ void PreferencesDialog::create_items()
         {_L("Filament & Color"), _L("Color only")});
     g_sizer->Add(item_filament_sync_mode);
 
+    //// ONLINE > Filament Database
+    g_sizer->Add(create_item_title(_L("Filament Database")), 1, wxEXPAND);
+
+    {
+        // URL input for Filament DB — uses no validator (URLs contain colons, slashes, dots)
+        wxBoxSizer *sizer_fdb = new wxBoxSizer(wxHORIZONTAL);
+        auto fdb_title = new wxStaticText(m_parent, wxID_ANY, _L("Filament DB URL"), wxDefaultPosition, DESIGN_TITLE_SIZE, wxST_NO_AUTORESIZE);
+        fdb_title->SetForegroundColour(DESIGN_GRAY900_COLOR);
+        fdb_title->SetFont(::Label::Body_14);
+        fdb_title->SetToolTip(_L("URL of local Filament DB service (e.g. http://localhost:3456). Leave empty to disable."));
+        fdb_title->Wrap(DESIGN_TITLE_SIZE.x);
+
+        auto fdb_input = new ::TextInput(m_parent, wxEmptyString, wxEmptyString, wxEmptyString, wxDefaultPosition, DESIGN_INPUT_SIZE, wxTE_PROCESS_ENTER);
+        StateColor fdb_bg(std::pair<wxColour, int>(wxColour("#F0F0F1"), StateColor::Disabled), std::pair<wxColour, int>(*wxWHITE, StateColor::Enabled));
+        fdb_input->SetBackgroundColor(fdb_bg);
+        fdb_input->GetTextCtrl()->SetValue(app_config->get("filament_db_url"));
+        fdb_input->SetToolTip(_L("URL of local Filament DB service (e.g. http://localhost:3456). Leave empty to disable."));
+
+        sizer_fdb->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+        sizer_fdb->Add(fdb_title, 0, wxALIGN_CENTER_VERTICAL);
+        sizer_fdb->Add(fdb_input, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
+
+        fdb_input->GetTextCtrl()->Bind(wxEVT_TEXT_ENTER, [this, fdb_input](wxCommandEvent &e) {
+            auto value = fdb_input->GetTextCtrl()->GetValue();
+            app_config->set("filament_db_url", std::string(value.mb_str()));
+            app_config->save();
+            e.Skip();
+        });
+
+        fdb_input->GetTextCtrl()->Bind(wxEVT_KILL_FOCUS, [this, fdb_input](wxFocusEvent &e) {
+            auto value = fdb_input->GetTextCtrl()->GetValue();
+            app_config->set("filament_db_url", std::string(value.mb_str()));
+            e.Skip();
+        });
+
+        g_sizer->Add(sizer_fdb);
+    }
+
     //// ONLINE > Network plugin
     g_sizer->Add(create_item_title(_L("Network plug-in")), 1, wxEXPAND);
 

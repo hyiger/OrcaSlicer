@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <boost/log/trivial.hpp>
 #include <boost/algorithm/string.hpp>
 
 #include <wx/sizer.h>
@@ -46,6 +47,7 @@
 #include "wxExtensions.hpp"
 
 #include "DeviceCore/DevManager.h"
+#include "../Utils/FilamentDbClient.hpp"
 
 // A workaround for a set of issues related to text fitting into gtk widgets:
 #if defined(__WXGTK20__) || defined(__WXGTK3__)
@@ -572,6 +574,76 @@ int PresetComboBox::selected_ams_filament() const
     return -1;
 }
 
+// Singleton Filament DB client shared across all combo boxes
+static FilamentDbClient& get_filament_db_client()
+{
+    static FilamentDbClient s_client;
+    return s_client;
+}
+
+bool PresetComboBox::add_filament_db_entries(const std::string& selected)
+{
+    bool selected_in_db = false;
+    std::string db_url;
+    auto* app_config = wxGetApp().app_config;
+    if (app_config)
+        db_url = app_config->get("filament_db_url");
+    if (db_url.empty())
+        return false;
+
+    auto& fdb = get_filament_db_client();
+
+    // If URL changed, update and clear cache
+    if (fdb.get_url() != db_url)
+        fdb.set_url(db_url);
+
+    // Fetch filaments if not yet cached (synchronous — fast for local service)
+    auto entries = fdb.get_filaments();
+    if (entries.empty()) {
+        BOOST_LOG_TRIVIAL(info) << "FilamentDbClient: fetching filaments from " << db_url;
+        if (!fdb.fetch_filaments(db_url)) {
+            BOOST_LOG_TRIVIAL(warning) << "FilamentDbClient: fetch failed from " << db_url;
+            return false;
+        }
+        entries = fdb.get_filaments();
+        if (entries.empty())
+            return false;
+    }
+
+    set_label_marker(Append(_L("Filament DB"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
+    m_first_filament_db = GetCount();
+
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const auto& entry = entries[i];
+        // Build display name: "Vendor Type - Name" or just "Name"
+        std::string display = entry.name;
+
+        // Create a color bitmap from the hex color
+        wxBitmap bmp;
+        if (!entry.color.empty()) {
+            bmp = *get_extruder_color_icon(entry.color, entry.name, 24, 16);
+        }
+
+        Append(from_u8(display), bmp.IsOk() ? bmp.ConvertToImage() : wxNullBitmap,
+               &m_first_filament_db + static_cast<int>(i));
+        SetFlag(GetCount() - 1, (int) FilamentAMSType::FROM_FILAMENT_DB);
+
+        if (display == selected)
+            selected_in_db = true;
+    }
+
+    m_last_filament_db = GetCount();
+    return selected_in_db;
+}
+
+int PresetComboBox::selected_filament_db_entry() const
+{
+    if (m_first_filament_db && m_last_selected >= m_first_filament_db && m_last_selected < m_last_filament_db) {
+        return reinterpret_cast<int *>(GetClientData(m_last_selected)) - &m_first_filament_db;
+    }
+    return -1;
+}
+
 void PresetComboBox::msw_rescale()
 {
     m_em_unit = em_unit(this);
@@ -948,6 +1020,41 @@ void PlaterPresetComboBox::OnSelect(wxCommandEvent &evt)
             wxTheApp->CallAfter([sp]() { run_wizard(sp); });
         //}
         return;
+    } else if (m_type == Preset::TYPE_FILAMENT && GetFlag(selected_item) == (int) FilamentAMSType::FROM_FILAMENT_DB) {
+        // Filament DB entry selected: create a dynamic user preset from DB data
+        m_last_selected = selected_item;
+        int db_idx = selected_filament_db_entry();
+        if (db_idx >= 0) {
+            auto& fdb = get_filament_db_client();
+            auto entries = fdb.get_filaments();
+            if (db_idx < (int) entries.size()) {
+                const auto& entry = entries[db_idx];
+                std::string preset_name = entry.name;
+
+                // Build a full config: start from the default preset, then apply DB values
+                Preset base_preset = m_collection->default_preset();
+                base_preset.config.apply(entry.config);
+
+                // Set filament_settings_id to the DB name
+                auto* fsi = base_preset.config.option<ConfigOptionStrings>("filament_settings_id", true);
+                if (fsi) fsi->values[0] = preset_name;
+
+                // Save as a user preset (this inserts into the collection and selects it)
+                m_collection->save_current_preset(preset_name, /*detach=*/true, /*save_to_project=*/false, &base_preset);
+
+                // Update the filament preset selection for this extruder
+                wxGetApp().preset_bundle->set_filament_preset(m_filament_idx, preset_name);
+
+                // Update combo display and notify
+                update();
+                update_ams_color();
+                wxGetApp().plater()->on_config_change(m_collection->get_edited_preset().config);
+
+                BOOST_LOG_TRIVIAL(info) << "FilamentDbClient: created preset '" << preset_name << "' from DB";
+            }
+        }
+        evt.StopPropagation();
+        return;
     } else if (marker == LABEL_ITEM_PHYSICAL_PRINTER ||  selected_item >= 0 || m_collection->current_is_dirty()) {
         m_last_selected = selected_item;
         if (m_type == Preset::TYPE_FILAMENT)
@@ -1256,6 +1363,8 @@ void PlaterPresetComboBox::update()
     if (m_type == Preset::TYPE_FILAMENT) {
         set_replace_text("Bambu", "BambuStudioBlack");
         selected_in_ams = add_ams_filaments(into_u8(selected_user_preset.empty() ? selected_system_preset : selected_user_preset), true);
+        // Add Filament DB entries if configured
+        add_filament_db_entries(into_u8(selected_user_preset.empty() ? selected_system_preset : selected_user_preset));
     }
 
     std::vector<std::string> filament_orders = {"Bambu PLA Basic", "Bambu PLA Matte", "Bambu PETG HF",    "Bambu ABS",      "Bambu PLA Silk", "Bambu PLA-CF",
@@ -1652,6 +1761,10 @@ void TabPresetComboBox::update()
 
     if (m_type == Preset::TYPE_FILAMENT && m_preset_bundle->is_bbl_vendor())
         add_ams_filaments(into_u8(selected));
+
+    // Filament DB entries for Tab combo box
+    if (m_type == Preset::TYPE_FILAMENT)
+        add_filament_db_entries(into_u8(selected));
 
     //BBS: add project embedded preset logic
     if (!project_embedded_presets.empty())
