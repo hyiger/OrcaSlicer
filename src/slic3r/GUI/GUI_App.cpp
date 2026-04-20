@@ -1,4 +1,6 @@
 #include "libslic3r/Technologies.hpp"
+#include <cstdlib>
+#include <exception>
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
@@ -2643,6 +2645,13 @@ int GUI_App::OnExit()
     } catch (...) {
         BOOST_LOG_TRIVIAL(error) << "Failed to clean up encrypt bbl network log file";
     }
+
+    // Orca: The Bambu networking plugin registers global/atexit destructors that
+    // tear down a boost::asio scheduler. During shutdown those handlers can throw,
+    // which escapes to std::terminate and produces a spurious crash report *after*
+    // the app has already exited cleanly. Swap in a terminate handler that quietly
+    // _exit(0)s so a plugin-side throw during static destruction doesn't abort.
+    std::set_terminate([]() noexcept { std::_Exit(0); });
 
     return wxApp::OnExit();
 }
