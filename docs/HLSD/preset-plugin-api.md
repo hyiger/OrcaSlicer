@@ -217,10 +217,13 @@ preserves those side effects and then verifies the resulting edited target.
 
 Filament `preset_name` is an additional integration on top of `Tab::select_preset()`:
 selecting a different name for a slot also updates the slot-to-preset mapping and its
-dependent UI/configuration state, mirroring the filament branch of the Plater's normal
-selection path (`PresetBundle::set_filament_preset()` plus the project/selection refresh,
-the dynamic filament list, the conditional support-filament flushing recalc, the slot
-combo refresh and its AMS sync badge). A mixed-color virtual slot is not targetable.
+dependent UI/configuration state, mirroring the Plater's normal selection path. The slot
+first takes the preset's `default_filament_colour`, written to the project config by
+`set_project_filament_colour()`, the helper the sidebar combo's `update_ams_color()` uses;
+a preset without a default color keeps the slot's color. Then come the filament branch's
+`PresetBundle::set_filament_preset()` plus the project/selection refresh, the dynamic
+filament list, the conditional support-filament flushing recalc, the slot combo refresh
+and its AMS sync badge. A mixed-color virtual slot is not targetable.
 
 Process and printer dropdown choices are constrained by visibility and compatibility,
 and compatibility may depend on the active context. Target resolution checks the tab

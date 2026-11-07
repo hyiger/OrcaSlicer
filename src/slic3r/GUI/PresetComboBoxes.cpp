@@ -309,18 +309,24 @@ int PresetComboBox::update_ams_color()
         ctype = iter->second.opt_string("filament_colour_type", 0u);
         colors = iter->second.opt<ConfigOptionStrings>("filament_multi_colour")->values;
     }
+    set_project_filament_colour(m_filament_idx, color, ctype, colors);
+    return idx;
+}
+
+void set_project_filament_colour(int filament_idx, const std::string &color, const std::string &ctype, const std::vector<std::string> &colors)
+{
     DynamicPrintConfig *cfg        = &wxGetApp().preset_bundle->project_config;
     auto color_head = static_cast<ConfigOptionStrings*>(cfg->option("filament_colour")->clone()); // single color (the first color if multi-color filament)
     auto color_pack = static_cast<ConfigOptionStrings *>(cfg->option("filament_multi_colour")->clone()); // multi color (all colors in all kinds of filament)
     auto color_type = static_cast<ConfigOptionStrings*>(cfg->option("filament_colour_type")->clone()); // color type
 
     // The slot can lie past the colour arrays (see sync_colour_config()).
-    if (m_filament_idx >= color_head->values.size()) color_head->values.resize(m_filament_idx + 1);
-    if (m_filament_idx >= color_pack->values.size()) color_pack->values.resize(m_filament_idx + 1);
-    if (m_filament_idx >= color_type->values.size()) color_type->values.resize(m_filament_idx + 1);
+    if (filament_idx >= color_head->values.size()) color_head->values.resize(filament_idx + 1);
+    if (filament_idx >= color_pack->values.size()) color_pack->values.resize(filament_idx + 1);
+    if (filament_idx >= color_type->values.size()) color_type->values.resize(filament_idx + 1);
 
-    color_head->values[m_filament_idx] = color;
-    color_type->values[m_filament_idx] = ctype;
+    color_head->values[filament_idx] = color;
+    color_type->values[filament_idx] = ctype;
     std::string color_str = ""; // Translate multi color info to config storage format
     for (auto &c : colors) {
         if (c.empty()) continue;
@@ -328,7 +334,7 @@ int PresetComboBox::update_ams_color()
     }
     if (color_str.empty()) color_str = color;
     else color_str.erase(color_str.size() - 1);
-    color_pack->values[m_filament_idx] = color_str;
+    color_pack->values[filament_idx] = color_str;
 
     // Update color informations in config
     DynamicPrintConfig new_cfg;
@@ -339,9 +345,8 @@ int PresetComboBox::update_ams_color()
     wxGetApp().plater()->on_config_change(new_cfg);
     //trigger the filament color changed
     wxCommandEvent *evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
-    evt->SetInt(m_filament_idx);
+    evt->SetInt(filament_idx);
     wxQueueEvent(wxGetApp().plater(), evt);
-    return idx;
 }
 
 wxColor PresetComboBox::different_color(wxColor const &clr)
