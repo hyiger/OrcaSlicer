@@ -115,11 +115,12 @@ struct SelectionCancelled : std::runtime_error
 //   * A filament preset_name that names a different preset for a slot selects it through
 //     Tab::select_preset() (the normal flow, honouring unsaved-edit prompts) and then updates the
 //     slot mapping with PresetBundle::set_filament_preset() plus every dependent side effect the
-//     sidebar selection path performs: the project-dirty/selection refresh, the dynamic filament
-//     list, the slot's own combo (re-run so it lists and selects the assigned target), the
-//     conditional support-filament flushing recalc and the slot's AMS sync badge (read from the
-//     slot combo's own flag). The private Plater::priv::on_select_preset() path cannot be reused
-//     from here, so this mirrors its filament branch rather than calling it.
+//     sidebar selection path performs: the slot's colour (the preset's default_filament_colour,
+//     when it defines one), the project-dirty/selection refresh, the dynamic filament list, the
+//     slot's own combo (re-run so it lists and selects the assigned target), the conditional
+//     support-filament flushing recalc and the slot's AMS sync badge (read from the slot combo's
+//     own flag). The private Plater::priv::on_select_preset() path cannot be reused from here, so
+//     this mirrors its filament branch rather than calling it.
 //   * A user-declined selection does not undo decisions the user already accepted in an earlier
 //     dialog. It aborts before any slot assignment or transaction is created, so no staged
 //     setting is applied.
@@ -516,9 +517,15 @@ void bind_filament_target(int slot_number, const std::string& preset_name, Prese
     if (!preset_name.empty() && target != assigned_internal) {
         if (app.app_config == nullptr)
             throw std::runtime_error("Application configuration is not available");
-        // Mirror the filament branch of Plater::priv::on_select_preset() (the sidebar's normal
-        // preset selection): update the mapping, then every dependent project/UI side effect,
-        // rather than the vector entry alone.
+        // Mirror the sidebar's normal preset selection. Its combo's OnSelect first gives the slot
+        // the preset's default colour (update_ams_color(); a preset without one keeps the slot's
+        // colour), then the filament branch of Plater::priv::on_select_preset() updates the
+        // mapping and every dependent project/UI side effect, rather than the vector entry alone.
+        if (const Preset* target_preset = bundle.filaments.find_preset(target)) {
+            const std::string colour = target_preset->config.opt_string("default_filament_colour", 0u);
+            if (!colour.empty())
+                GUI::set_project_filament_colour(static_cast<int>(slot_index), colour, {}, {});
+        }
         const bool was_support = GUI::is_support_filament(static_cast<int>(slot_index));
         bundle.set_filament_preset(slot_index, target);
         plater->update_project_dirty_from_presets();
@@ -749,8 +756,9 @@ void host_bindings::register_presets(py::module_& host)
             "Resolve and bind a filament preset by 1-based slot and return a PresetTransaction. Omitting preset_name "
             "targets the preset assigned to the slot; supplying a different name selects it for the slot through the "
             "normal flow (prompting about unsaved edits) and, once that succeeds, records the new slot assignment with "
-            "the same Plater side effects the sidebar selection performs (project/selection refresh, dynamic filament "
-            "list, conditional support-filament flushing recalc and the slot's AMS sync badge). A requested preset "
+            "the same Plater side effects the sidebar selection performs (the slot takes the preset's default color "
+            "when it defines one, project/selection refresh, dynamic filament list, conditional support-filament "
+            "flushing recalc and the slot's AMS sync badge). A requested preset "
             "this slot's dropdown does not offer is rejected before that flow, so it raises no prompt; the slot's own "
             "current assignment stays targetable even when the dropdown hides it. A selection the user cancels raises "
             "RuntimeError and changes neither the slot assignment nor any setting. An out-of-range, empty or "

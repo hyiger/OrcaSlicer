@@ -36,6 +36,12 @@ namespace GUI {
 
 class BitmapCache;
 
+// Writes the colour of 0-based filament slot `filament_idx` into the project config
+// (filament_colour, filament_colour_type and filament_multi_colour) and notifies the plater, as
+// picking a filament for that slot in a preset combo does. `colors` holds every colour of a
+// multi-colour filament and may be empty.
+void set_project_filament_colour(int filament_idx, const std::string &color, const std::string &ctype, const std::vector<std::string> &colors);
+
 // ---------------------------------
 // ***  PresetComboBox  ***
 // ---------------------------------
