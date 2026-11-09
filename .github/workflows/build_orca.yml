@@ -363,6 +363,17 @@ jobs:
           # Load the `retry` and `create_dmg` helpers.
           source ${{ github.workspace }}/scripts/retry.sh
           source ${{ github.workspace }}/scripts/create_dmg.sh
+          # The linker signs only the arm64 slice, under the executable's file name, and
+          # leaves the bundle unsealed. macOS Local Network privacy can't match that app
+          # to its permission, so every connection to a printer on the LAN fails with
+          # curl error 7. An ad hoc signature seals the bundle and carries the bundle ID on
+          # both slices; --deep is enough, as nothing here is notarized. On release/*
+          # branches "Sign app and notary" has already signed the app, so it is left as it is.
+          APP=${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app
+          if ! codesign --verify --strict "$APP" 2>/dev/null; then
+            codesign --force --deep --sign - "$APP"
+            codesign --verify --deep --strict "$APP"
+          fi
           mkdir -p ${{ github.workspace }}/build/universal/OrcaSlicer_dmg
           rm -rf ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/*
           cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/
